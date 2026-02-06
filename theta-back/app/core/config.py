@@ -6,7 +6,7 @@ load_dotenv()
 
 class Settings:
     PROJECT_NAME: str = "Theta LLM Backend"
-    VERSION: str = "1.0.0"
+    VERSION: str = "2.0.0"
     
     # Secrets
     FB_PAGE_ACCESS_TOKEN: str = os.getenv("FB_PAGE_ACCESS_TOKEN", "")
