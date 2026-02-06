@@ -138,7 +138,7 @@ export default function Home() {
               Privacy Policy
             </Link>
             <a
-              href="https://github.com/takrim1999/thetallm"
+              href="https://github.com/ts-mind/thetallm"
               target="_blank"
               rel="noopener noreferrer"
               className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-dark"
@@ -187,7 +187,7 @@ export default function Home() {
 
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <a
-                href="https://www.facebook.com/profile.php?id=61576227956295"
+                href="https://www.facebook.com/thetallm/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-accent px-8 text-sm font-medium text-white shadow-lg shadow-accent/25 transition-all hover:bg-accent-dark hover:shadow-xl hover:shadow-accent/30"
@@ -330,7 +330,7 @@ export default function Home() {
                 Privacy Policy
               </Link>
               <a
-                href="https://github.com/takrim1999/thetallm"
+                href="https://github.com/ts-mind/thetallm"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="transition-colors hover:text-foreground"
