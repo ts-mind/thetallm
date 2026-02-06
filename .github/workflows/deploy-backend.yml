@@ -38,20 +38,12 @@ jobs:
             cd ${{ secrets.DO_PROJECT_PATH }}
             git pull origin main
 
-            echo "=== Installing dependencies ==="
+            echo "=== Installing dependencies via uv ==="
             cd theta-back
-            pip install -r requirements.txt --quiet
+            uv sync
 
             echo "=== Restarting backend service ==="
-            # Option A: If using systemd (recommended)
             sudo systemctl restart theta-backend
-
-            # Option B: If using PM2 (uncomment if preferred)
-            # pm2 restart theta-backend
-
-            # Option C: If using a simple process (uncomment if preferred)
-            # pkill -f "uvicorn app.main:app" || true
-            # nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > /tmp/theta-backend.log 2>&1 &
 
             echo "=== Verifying health ==="
             sleep 3
