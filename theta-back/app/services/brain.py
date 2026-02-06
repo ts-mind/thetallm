@@ -1,11 +1,20 @@
+import time
 import logging
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 from app.core.config import settings
 
 logger = logging.getLogger("theta.brain")
 
 SIGNATURE = "\n\n— Theta AI (TeraMind) 🧬"
+
+# Model cascade: if the primary is rate-limited, try the next one.
+MODELS = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+]
 
 SYSTEM_FEED = """You are Theta, a research AI from TeraMind.
 A user tagged you on a Facebook post asking you to verify it.
@@ -43,24 +52,60 @@ class ThetaBrain:
     def chat_reply(self, user_message: str) -> str:
         return self._generate(SYSTEM_CHAT, user_message)
 
-    # ── Shared generator ──
+    # ── Generator with retry + model fallback ──
 
     def _generate(self, system: str, user_content: str) -> str:
         if not user_content:
             return "I didn't catch that — could you try again?"
-        try:
-            resp = self.client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=user_content,
-                config=types.GenerateContentConfig(
-                    system_instruction=system,
-                    tools=[self._search_tool],
-                ),
-            )
-            return resp.text.strip()
-        except Exception as e:
-            logger.error(f"Gemini error: {e}", exc_info=True)
-            return "My neural net glitched — try again in a moment. — Theta"
+
+        for model in MODELS:
+            result = self._try_model(model, system, user_content)
+            if result is not None:
+                return result
+
+        logger.error("All models exhausted after retries")
+        return (
+            "I'm experiencing high demand right now and all my AI models "
+            "are at capacity. Please try again in a minute or two. — Theta"
+        )
+
+    def _try_model(self, model: str, system: str, content: str) -> str | None:
+        """
+        Try a single model with one retry on 429.
+        Returns the reply text, or None if this model is exhausted.
+        """
+        for attempt in range(2):        # attempt 0 = first try, attempt 1 = retry
+            try:
+                resp = self.client.models.generate_content(
+                    model=model,
+                    contents=content,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system,
+                        tools=[self._search_tool],
+                    ),
+                )
+                logger.info(f"Generated with {model} (attempt {attempt + 1})")
+                return resp.text.strip()
+
+            except ClientError as e:
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    if attempt == 0:
+                        wait = 50       # Google said ~45s, add buffer
+                        logger.warning(f"{model} rate-limited, waiting {wait}s then retrying…")
+                        time.sleep(wait)
+                        continue
+                    else:
+                        logger.warning(f"{model} still rate-limited after retry, falling back")
+                        return None     # signal: try next model
+                else:
+                    logger.error(f"{model} client error: {e}")
+                    return None
+
+            except Exception as e:
+                logger.error(f"{model} unexpected error: {e}", exc_info=True)
+                return None
+
+        return None
 
 
 brain = ThetaBrain()
