@@ -115,7 +115,7 @@ async def webhook(request: Request, bg: BackgroundTasks):
             if field == "feed":
                 _handle_feed(val, bg)
 
-            elif field == "mentions":
+            elif field == "mention":
                 _handle_mention(val, bg)
 
             else:

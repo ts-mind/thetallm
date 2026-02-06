@@ -12,7 +12,7 @@ SIGNATURE = "\n\n— Theta AI (TeraMind) 🧬"
 # Use only models that exist in your project (ListModels can vary by account).
 MODELS = [
     "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
+    # "gemini-2.0-flash-lite",
 ]
 
 SYSTEM_FEED = (
