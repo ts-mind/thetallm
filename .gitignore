@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Node/Next.js
+node_modules/
+.next/
+dist/
+
+# System
+.DS_Store
+
+# Research Data (Don't upload massive datasets to GitHub)
+research/datasets/*
+!research/datasets/.gitkeep

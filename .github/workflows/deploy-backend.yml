@@ -1,0 +1,60 @@
+# =============================================================================
+# GitHub Actions: Auto-deploy theta-back to Digital Ocean
+# =============================================================================
+# Triggers ONLY when files inside theta-back/ change on the main branch.
+# SSHs into the droplet, pulls latest code, and restarts the backend.
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   DO_SSH_HOST      — Your droplet IP (e.g., 164.90.xxx.xxx)
+#   DO_SSH_USER      — SSH user (e.g., root or deploy)
+#   DO_SSH_KEY       — Private SSH key (ed25519 or RSA)
+#   DO_PROJECT_PATH  — Absolute path on droplet (e.g., /root/thetallm)
+# =============================================================================
+
+name: Deploy Backend to Digital Ocean
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "theta-back/**"
+
+jobs:
+  deploy:
+    name: Deploy theta-back
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DO_SSH_HOST }}
+          username: ${{ secrets.DO_SSH_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "=== Pulling latest code ==="
+            cd ${{ secrets.DO_PROJECT_PATH }}
+            git pull origin main
+
+            echo "=== Installing dependencies ==="
+            cd theta-back
+            pip install -r requirements.txt --quiet
+
+            echo "=== Restarting backend service ==="
+            # Option A: If using systemd (recommended)
+            sudo systemctl restart theta-backend
+
+            # Option B: If using PM2 (uncomment if preferred)
+            # pm2 restart theta-backend
+
+            # Option C: If using a simple process (uncomment if preferred)
+            # pkill -f "uvicorn app.main:app" || true
+            # nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > /tmp/theta-backend.log 2>&1 &
+
+            echo "=== Verifying health ==="
+            sleep 3
+            curl -sf http://localhost:8000/ || echo "WARNING: Health check failed"
+
+            echo "=== Deploy complete ==="

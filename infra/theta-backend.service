@@ -1,0 +1,30 @@
+# =============================================================================
+# Systemd Service: Theta LLM Backend
+# =============================================================================
+# Place at: /etc/systemd/system/theta-backend.service
+#
+# Then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable theta-backend
+#   sudo systemctl start theta-backend
+#
+# Logs: journalctl -u theta-backend -f
+# =============================================================================
+
+[Unit]
+Description=Theta LLM Backend (FastAPI/Uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/thetallm/theta-back
+EnvironmentFile=/root/thetallm/theta-back/.env
+ExecStart=/usr/local/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
