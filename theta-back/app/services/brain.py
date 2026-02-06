@@ -9,10 +9,10 @@ logger = logging.getLogger("theta.brain")
 SIGNATURE = "\n\n— Theta AI (TeraMind) 🧬"
 
 # Cascade: if primary is rate-limited, try the next instantly (no blocking).
+# Use only models that exist in your project (ListModels can vary by account).
 MODELS = [
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
 ]
 
 SYSTEM_FEED = (
