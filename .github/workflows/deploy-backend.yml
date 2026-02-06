@@ -33,19 +33,27 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -e
-            
+
+            # Non-interactive SSH shells don't source .bashrc/.profile,
+            # so uv/cargo binaries aren't on PATH. Load them explicitly.
+            export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+
+            echo "=== Verifying uv ==="
+            uv --version
+
             echo "=== Pulling latest code ==="
             cd ${{ secrets.DO_PROJECT_PATH }}
             git pull origin main
 
             echo "=== Installing dependencies via uv ==="
             cd theta-back
-            
-            # FIX: Manually add the cargo bin folder to PATH
-            export PATH="$HOME/.cargo/bin:$PATH"
-            
-            # Now it will find uv
             uv sync
 
             echo "=== Restarting backend service ==="
             sudo systemctl restart theta-backend
+
+            echo "=== Verifying health ==="
+            sleep 3
+            curl -sf http://localhost:8000/ || echo "WARNING: Health check failed"
+
+            echo "=== Deploy complete ==="
