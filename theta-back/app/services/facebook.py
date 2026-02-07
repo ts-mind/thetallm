@@ -39,7 +39,13 @@ class FacebookService:
         payload["access_token"] = self.page_token
         try:
             r = requests.post(url, json=payload, timeout=10)
-            return r.json()
+            data = r.json()
+
+            # 🚨 NEW: Catch the Privacy Error
+            if "error" in data:
+                logger.error(f"❌ FB POST ERROR: {data['error'].get('message')} (Code: {data['error'].get('code')})")
+
+            return data
         except requests.RequestException as e:
             logger.error(f"Graph POST /{endpoint} failed: {e}")
             return {}

@@ -115,11 +115,20 @@ async def process_mention(post_id: str, target_id: str, user_psid: str):
         # Standard witty reply
         reply_text = brain.analyze_and_reply(context)
 
-    # 4. Reply
-    final_reply = f"@[{user_psid}] {reply_text}" if user_psid else reply_text
-    fb_service.post_comment(target_id, final_reply)
-    increment_posts_analyzed()
-    logger.info("✅ Mention answered")
+        #
+        # ... inside process_mention ...
+
+        # 4. Reply
+        final_reply = f"@[{user_psid}] {reply_text}" if user_psid else reply_text
+
+        resp = fb_service.post_comment(target_id, final_reply)
+
+        # 🚨 NEW: Check success
+        if "error" in resp:
+            logger.error("❌ FAILED to post reply due to Facebook Privacy Rules.")
+        else:
+            increment_posts_analyzed()
+            logger.info("✅ Mention answered")
 
 async def process_comment(post_id: str, comment_id: str, user_psid: str):
     context = fb_service.get_comment_context(comment_id, post_id)
