@@ -1,6 +1,8 @@
 import logging
 import requests
 import re
+import json
+import html
 from app.core.config import settings
 
 logger = logging.getLogger("theta.facebook")
@@ -11,15 +13,14 @@ class FacebookService:
         self.base_url = settings.FB_GRAPH_URL
         self.page_token = settings.FB_PAGE_ACCESS_TOKEN
 
-        # Headers: We impersonate a standard Desktop Browser for the Embed endpoint
+        # 🎭 HEADERS: Masquerade as a Desktop Browser (Crucial for Embeds)
         self.headers_desktop = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-        }
-        # Headers: We impersonate an Old Android Phone for mBasic
-        self.headers_mobile = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-A205U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.164 Mobile Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-Fetch-Dest": "iframe",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "cross-site",
         }
 
     def _get(self, endpoint: str, params: dict = None) -> dict:
@@ -55,89 +56,92 @@ class FacebookService:
             return {"name": "User", "first_name": "Friend"}
         return data
 
-    # ── THE "TRIPLE TAP" SCRAPER ──
+    # ── THE "EMBED" SCRAPER (Success Strategy) ──
 
     def _scrape_post_fallback(self, full_post_id: str) -> str:
         """
-        Tries 3 different URL structures to find the post content.
+        Scrapes the public 'Embed' endpoint to get text and images.
+        Returns a JSON string: '{"text": "...", "images": [...]}'
         """
         try:
-            # Parse ID: "PageID_PostID" -> user_id, post_id
             parts = full_post_id.split("_")
-            if len(parts) != 2:
-                logger.error(f"❌ Invalid ID format for scraping: {full_post_id}")
-                return ""
-
+            if len(parts) != 2: return ""
             user_id, post_id = parts
 
-            # 🎯 STRATEGY 1: The Embed Endpoint (Most Reliable for Public Posts)
-            # Facebook puts the post content inside the embed HTML for 3rd party sites.
+            # 🎯 URL: The Public Embed Plugin
             embed_url = f"https://www.facebook.com/plugins/post.php?href=https%3A%2F%2Fwww.facebook.com%2F{user_id}%2Fposts%2F{post_id}&width=500"
-            logger.info(f"⛏️ Trying Embed: {embed_url}")
+            logger.info(f"⛏️ Scraping Embed: {embed_url}")
 
-            resp = requests.get(embed_url, headers=self.headers_desktop, timeout=5)
-            if resp.status_code == 200:
-                text = self._extract_text(resp.text)
-                if text: return text
+            resp = requests.get(embed_url, headers=self.headers_desktop, timeout=8)
+            if resp.status_code != 200:
+                logger.warning(f"Scrape failed: {resp.status_code}")
+                return ""
 
-            # 🎯 STRATEGY 2: mBasic Corrected Path
-            # Path: /UserID/posts/PostID
-            mbasic_url = f"https://mbasic.facebook.com/{user_id}/posts/{post_id}"
-            logger.info(f"⛏️ Trying mBasic Path: {mbasic_url}")
+            # 🕵️ EXTRACTION
+            content = resp.text
+            data = {"text": "", "images": []}
 
-            resp = requests.get(mbasic_url, headers=self.headers_mobile, timeout=5)
-            if resp.status_code == 200:
-                text = self._extract_text(resp.text)
-                if text: return text
+            # 1. TEXT: Extract from <p> tags
+            p_matches = re.findall(r'<p[^>]*>(.*?)</p>', content, re.DOTALL)
+            valid_lines = []
+            for p in p_matches:
+                clean = self._clean_html(p)
+                if len(clean) > 2 and "Facebook" not in clean:
+                    valid_lines.append(clean)
 
-            # 🎯 STRATEGY 3: Legacy Story Path
-            # Path: /story.php?story_fbid=PostID&id=UserID
-            story_url = f"https://mbasic.facebook.com/story.php?story_fbid={post_id}&id={user_id}"
-            logger.info(f"⛏️ Trying Story Path: {story_url}")
+            if valid_lines:
+                data["text"] = "\n".join(valid_lines)
+            else:
+                # Fallback: Meta Description
+                meta_match = re.search(r'<meta\s+name="description"\s+content="([^"]*)"', content, re.IGNORECASE)
+                if meta_match:
+                    data["text"] = self._clean_html(meta_match.group(1))
 
-            resp = requests.get(story_url, headers=self.headers_mobile, timeout=5)
-            if resp.status_code == 200:
-                text = self._extract_text(resp.text)
-                if text: return text
+            # 2. IMAGES: Extract & Filter
+            img_matches = re.findall(r'<img[^>]+src="([^"]+)"', content)
+            for img_url in img_matches:
+                img_url = html.unescape(img_url)
 
-            return ""
+                # 🛡️ FILTER: Remove Profile Pics (s50x50, cp0_dst) & Icons
+                if any(x in img_url for x in ["s50x50", "p50x50", "cp0_dst", "static", "emoji"]):
+                    continue
+
+                # Must be a content image (usually served from scontent)
+                if "scontent" in img_url and img_url not in data["images"]:
+                    data["images"].append(img_url)
+
+            # 3. FINALIZE: Nullify images if empty
+            if not data["images"]:
+                data["images"] = None
+
+            # Return JSON string so Brain can read it structurally
+            return json.dumps(data, ensure_ascii=False)
 
         except Exception as e:
             logger.error(f"❌ Scraping error: {e}")
             return ""
 
-    def _extract_text(self, html: str) -> str:
-        """Helper to pull text from HTML soup using Regex."""
-        # 1. Try Meta Description (Cleanest)
-        match = re.search(r'<meta\s+name="description"\s+content="([^"]*)"', html, re.IGNORECASE)
-        if match:
-            text = match.group(1)
-            if "Log into Facebook" not in text and "Facebook" != text:
-                return text
-
-        # 2. Try Title
-        match_title = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
-        if match_title:
-            text = match_title.group(1)
-            if "Log into" not in text and "Facebook" != text:
-                return text
-
-        return ""
+    def _clean_html(self, raw_html: str) -> str:
+        """Removes tags and unescapes entities."""
+        if not raw_html: return ""
+        text = html.unescape(raw_html)
+        text = re.sub(r'<[^>]+>', '', text)
+        return text.strip()
 
     def get_post_context(self, post_id: str) -> str:
         """Fetches post text via API, falls back to Scraping."""
-        # 1. Try API
+        # 1. Try API (Returns plain text)
         data = self._get(post_id, params={"fields": "message,caption,description"})
         if "error" not in data:
             return data.get("message") or data.get("description") or data.get("caption") or ""
 
-        # 2. API Failed? ENABLE SCRAPE MODE
+        # 2. API Failed? ENABLE SCRAPE MODE (Returns JSON String)
         logger.warning(f"⚠️ API blocked reading {post_id}. Engaging Scraper...")
-        scraped_text = self._scrape_post_fallback(post_id)
+        scraped_json = self._scrape_post_fallback(post_id)
 
-        if scraped_text:
-            logger.info(f"✅ Scrape Successful: {scraped_text[:30]}...")
-            return scraped_text
+        if scraped_json:
+            logger.info(f"✅ Scrape Successful")
+            return scraped_json
 
         return ""
 
@@ -147,10 +151,10 @@ class FacebookService:
         comment_text = c_data.get("message", "")
 
         # 2. Fetch the parent post
-        post_text = self.get_post_context(post_id)
-        if not post_text: post_text = "[Post Content Hidden]"
+        post_context = self.get_post_context(post_id)
+        if not post_context: post_context = "[Post Content Hidden]"
 
-        return f"Post Content: \"{post_text}\"\nUser Comment: \"{comment_text}\""
+        return f"Post Context: {post_context}\nUser Comment: \"{comment_text}\""
 
     # ── ACTIONS ──
 
