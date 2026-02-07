@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 venv/
 .env
-
+.idea
 # Node/Next.js
 node_modules/
 .next/
