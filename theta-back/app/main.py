@@ -115,33 +115,33 @@ async def process_mention(post_id: str, target_id: str, user_psid: str):
         # Standard witty reply
         reply_text = brain.analyze_and_reply(context)
 
-    # 4. ROBUST REPLY STRATEGY
-    # Attempt 1: Reply to the Comment (Threaded) - Preferred
-    final_reply = f"@[{user_psid}] {reply_text}" if user_psid else reply_text
+        # 4. ROBUST REPLY STRATEGY
+        # Attempt 1: Reply to the Comment (Threaded) - Preferred
+        final_reply = f"@[{user_psid}] {reply_text}" if user_psid else reply_text
 
-    logger.info(f"🚀 Attempting threaded reply to {target_id}...")
-    resp = fb_service.post_comment(target_id, final_reply)
+        logger.info(f"🚀 Attempting threaded reply to {target_id}...")
+        resp = fb_service.post_comment(target_id, final_reply)
 
-    if "error" in resp:
-        # Error Code 100/10? The Threaded Reply was blocked.
-        logger.warning(f"⚠️ Threaded reply failed: {resp['error'].get('message')}")
+        if "error" in resp:
+            # Error Code 100/10? The Threaded Reply was blocked.
+            logger.warning(f"⚠️ Threaded reply failed: {resp['error'].get('message')}")
 
-        # Attempt 2: Reply to the POST (Top-Level) - Fallback
-        # We switch target from 'comment_id' to 'post_id'
-        if post_id and post_id != target_id:
-            logger.info(f"🔄 Retrying with Top-Level comment on {post_id}...")
-            resp_fallback = fb_service.post_comment(post_id, final_reply)
+            # Attempt 2: Reply to the POST (Top-Level) - Fallback
+            # We switch target from 'comment_id' to 'post_id'
+            if post_id and post_id != target_id:
+                logger.info(f"🔄 Retrying with Top-Level comment on {post_id}...")
+                resp_fallback = fb_service.post_comment(post_id, final_reply)
 
-            if "error" in resp_fallback:
-                logger.error("❌ TOP-LEVEL FAILED: Bot is totally blocked from this post.")
+                if "error" in resp_fallback:
+                    logger.error("❌ TOP-LEVEL FAILED: Bot is totally blocked from this post.")
+                else:
+                    increment_posts_analyzed()
+                    logger.info("✅ Mention answered (Top-Level Fallback)")
             else:
-                increment_posts_analyzed()
-                logger.info("✅ Mention answered (Top-Level Fallback)")
+                logger.error("❌ No fallback ID available.")
         else:
-            logger.error("❌ No fallback ID available.")
-    else:
-        increment_posts_analyzed()
-        logger.info("✅ Mention answered (Threaded)")
+            increment_posts_analyzed()
+            logger.info("✅ Mention answered (Threaded)")
 
 async def process_comment(post_id: str, comment_id: str, user_psid: str):
     context = fb_service.get_comment_context(comment_id, post_id)
