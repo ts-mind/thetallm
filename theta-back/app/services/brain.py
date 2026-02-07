@@ -8,14 +8,16 @@ logger = logging.getLogger("theta.brain")
 
 SIGNATURE = ""  # removed signature to make it feel more like a real chat
 
-# ✅ VERIFIED MODEL LIST
+# ✅ PRODUCTION MODEL STACK
+# We use the smartest available Gemma model first.
+# If it hits a rate limit, we instantly fall back to the mid-sized model.
 MODELS = [
-    "gemma-3-1b-it",  # Primary: High rate limit, fast
-    "gemma-3-4b-it",  # Secondary: Smarter, still Gemma
+    "gemma-3-27b-it",   # Primary: High Intelligence (Smartest)
+    "gemma-3-12b-it",   # Fallback: High Reliability (Smarter than 1B)
 ]
 
-# 🎭 THETA PERSONA (The "Soul" of the Bot)
-# 🎭 THETA PERSONA (Updated for Speed & Professionalism)
+# 🎭 THETA PERSONA (Professional & Intelligent)
+# We removed the "casual/emoji" instruction to save tokens and reduce "cringe".
 SYSTEM_INSTRUCTION_TEXT = (
     "You are Theta AI, a digital intelligence created by TeraMind.\n\n"
     "CORE PERSONALITY:\n"
