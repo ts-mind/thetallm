@@ -11,11 +11,15 @@ class FacebookService:
         self.base_url = settings.FB_GRAPH_URL
         self.page_token = settings.FB_PAGE_ACCESS_TOKEN
 
-        # 🛠️ UPDATED: Mobile User-Agent for mbasic access
-        self.scrape_headers = {
+        # Headers: We impersonate a standard Desktop Browser for the Embed endpoint
+        self.headers_desktop = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        # Headers: We impersonate an Old Android Phone for mBasic
+        self.headers_mobile = {
             "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-A205U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.164 Mobile Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://mbasic.facebook.com/",
         }
 
     def _get(self, endpoint: str, params: dict = None) -> dict:
@@ -51,53 +55,50 @@ class FacebookService:
             return {"name": "User", "first_name": "Friend"}
         return data
 
-    # ── THE "MBASIC" SCRAPER ──
+    # ── THE "TRIPLE TAP" SCRAPER ──
 
-    def _scrape_post_fallback(self, post_id: str) -> str:
+    def _scrape_post_fallback(self, full_post_id: str) -> str:
         """
-        Fallback: Scrapes mbasic.facebook.com (Static HTML) when API fails.
+        Tries 3 different URL structures to find the post content.
         """
         try:
-            # 1. Clean ID: Convert "PageID_PostID" -> "PostID"
-            clean_id = post_id.split("_")[-1]
-
-            # 2. Target mbasic (The "Dumb Phone" version)
-            # This version has NO React, NO complex blocking scripts.
-            target_url = f"https://mbasic.facebook.com/{clean_id}"
-
-            logger.info(f"⛏️ Scraping mbasic: {target_url}")
-
-            # 3. Request
-            resp = requests.get(target_url, headers=self.scrape_headers, timeout=5)
-
-            if resp.status_code != 200:
-                logger.warning(f"Scrape failed with code {resp.status_code}")
+            # Parse ID: "PageID_PostID" -> user_id, post_id
+            parts = full_post_id.split("_")
+            if len(parts) != 2:
+                logger.error(f"❌ Invalid ID format for scraping: {full_post_id}")
                 return ""
 
-            html = resp.text
+            user_id, post_id = parts
 
-            # 4. Extraction Strategy
+            # 🎯 STRATEGY 1: The Embed Endpoint (Most Reliable for Public Posts)
+            # Facebook puts the post content inside the embed HTML for 3rd party sites.
+            embed_url = f"https://www.facebook.com/plugins/post.php?href=https%3A%2F%2Fwww.facebook.com%2F{user_id}%2Fposts%2F{post_id}&width=500"
+            logger.info(f"⛏️ Trying Embed: {embed_url}")
 
-            # Strategy A: Meta Description (Best for "Summary")
-            match = re.search(r'<meta\s+name="description"\s+content="([^"]*)"', html, re.IGNORECASE)
-            if match:
-                text = match.group(1)
-                # Cleanup "Log into Facebook" trash
-                if "Log into Facebook" not in text:
-                    return text
+            resp = requests.get(embed_url, headers=self.headers_desktop, timeout=5)
+            if resp.status_code == 200:
+                text = self._extract_text(resp.text)
+                if text: return text
 
-            # Strategy B: Title Tag (mbasic often puts the post content in title)
-            match_title = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
-            if match_title:
-                text = match_title.group(1)
-                # If title is just "Facebook" or "Log In", it failed.
-                if "Facebook" not in text and "Log In" not in text:
-                    return text
+            # 🎯 STRATEGY 2: mBasic Corrected Path
+            # Path: /UserID/posts/PostID
+            mbasic_url = f"https://mbasic.facebook.com/{user_id}/posts/{post_id}"
+            logger.info(f"⛏️ Trying mBasic Path: {mbasic_url}")
 
-            # Strategy C: Raw Body Text (Desperation Move)
-            # In mbasic, the main post is often in a <p> or <div>.
-            # This is hard to regex cleanly without BS4, but let's try a simple grab.
-            # (Skipping for now to avoid garbage data)
+            resp = requests.get(mbasic_url, headers=self.headers_mobile, timeout=5)
+            if resp.status_code == 200:
+                text = self._extract_text(resp.text)
+                if text: return text
+
+            # 🎯 STRATEGY 3: Legacy Story Path
+            # Path: /story.php?story_fbid=PostID&id=UserID
+            story_url = f"https://mbasic.facebook.com/story.php?story_fbid={post_id}&id={user_id}"
+            logger.info(f"⛏️ Trying Story Path: {story_url}")
+
+            resp = requests.get(story_url, headers=self.headers_mobile, timeout=5)
+            if resp.status_code == 200:
+                text = self._extract_text(resp.text)
+                if text: return text
 
             return ""
 
@@ -105,16 +106,33 @@ class FacebookService:
             logger.error(f"❌ Scraping error: {e}")
             return ""
 
+    def _extract_text(self, html: str) -> str:
+        """Helper to pull text from HTML soup using Regex."""
+        # 1. Try Meta Description (Cleanest)
+        match = re.search(r'<meta\s+name="description"\s+content="([^"]*)"', html, re.IGNORECASE)
+        if match:
+            text = match.group(1)
+            if "Log into Facebook" not in text and "Facebook" != text:
+                return text
+
+        # 2. Try Title
+        match_title = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
+        if match_title:
+            text = match_title.group(1)
+            if "Log into" not in text and "Facebook" != text:
+                return text
+
+        return ""
+
     def get_post_context(self, post_id: str) -> str:
         """Fetches post text via API, falls back to Scraping."""
         # 1. Try API
         data = self._get(post_id, params={"fields": "message,caption,description"})
-
         if "error" not in data:
             return data.get("message") or data.get("description") or data.get("caption") or ""
 
         # 2. API Failed? ENABLE SCRAPE MODE
-        logger.warning(f"⚠️ API blocked reading {post_id}. Engaging mBasic Scraper...")
+        logger.warning(f"⚠️ API blocked reading {post_id}. Engaging Scraper...")
         scraped_text = self._scrape_post_fallback(post_id)
 
         if scraped_text:
