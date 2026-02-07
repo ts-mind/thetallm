@@ -15,12 +15,11 @@ app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all for testing
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ... (Keep health/stats/verify endpoints) ...
 @app.get("/webhook")
@@ -30,7 +29,6 @@ async def verify(request: Request):
         return int(p.get("hub.challenge"))
     return "Failed", 403
 
-
 # ── WEBHOOK ROUTER ──
 @app.post("/webhook")
 async def webhook(request: Request, bg: BackgroundTasks):
@@ -38,15 +36,11 @@ async def webhook(request: Request, bg: BackgroundTasks):
     if data.get("object") != "page": return {"status": "ignored"}
 
     for entry in data.get("entry", []):
-
         # 1. MESSAGES (DM)
         for msg in entry.get("messaging", []):
             sender = msg.get("sender", {}).get("id")
             text = msg.get("message", {}).get("text")
-
             if sender == settings.PAGE_ID: continue
-
-            # Filter out stickers/images/reads
             if text:
                 logger.info(f"📩 DM from {sender}: {text}")
                 bg.add_task(process_dm, sender, text)
@@ -55,15 +49,12 @@ async def webhook(request: Request, bg: BackgroundTasks):
         for change in entry.get("changes", []):
             field = change.get("field")
             val = change.get("value", {})
-
             if field == "feed":
                 _handle_feed(val, bg)
-            # FIX: Accept singular 'mention'
             elif field in ("mentions", "mention"):
                 _handle_mention(val, bg)
 
     return {"status": "received"}
-
 
 # ── HANDLERS ──
 
@@ -71,46 +62,36 @@ def _handle_feed(val: dict, bg: BackgroundTasks):
     item = val.get("item")
     verb = val.get("verb")
     sender_id = str(val.get("from", {}).get("id", ""))
-
     if sender_id == settings.PAGE_ID: return
-
     if item == "comment" and verb == "add":
         bg.add_task(process_comment, val.get("post_id"), val.get("comment_id"), sender_id)
 
-
 def _handle_mention(val: dict, bg: BackgroundTasks):
     if val.get("verb") != "add": return
-
     post_id = val.get("post_id", "")
     comment_id = val.get("comment_id")
     target_id = comment_id if comment_id else post_id
-    sender_id = str(val.get("sender_id", ""))  # Might be empty!
-
+    sender_id = str(val.get("sender_id", ""))
     if sender_id == settings.PAGE_ID: return
 
     if post_id and target_id:
         logger.info(f"🏷️ BOT SUMMONED (Target: {target_id})")
-        # Pass the (possibly empty) sender_id to the worker
         bg.add_task(process_mention, post_id, target_id, sender_id)
-
 
 # ── WORKERS ──
 
 async def process_dm(sender_id: str, text: str):
-    # Double check for empty text
     if not text or not text.strip(): return
-
     logger.info(f"⚡ Processing DM for {sender_id}")
     reply = brain.chat_reply(text)
     fb_service.post_message(sender_id, reply)
     increment_dms_answered()
     logger.info("✅ DM answered")
 
-
 async def process_mention(post_id: str, target_id: str, user_psid: str):
     logger.info(f"⚡ Processing mention on {target_id}")
 
-    # 1. GHOST USER FIX: Fetch ID if missing
+    # 1. GHOST USER FIX
     if not user_psid:
         try:
             obj = fb_service.get_object(target_id, fields="from")
@@ -120,20 +101,27 @@ async def process_mention(post_id: str, target_id: str, user_psid: str):
         except Exception:
             pass
 
-    # 2. Get Context
+    # 2. Get Context (The Post Content)
     context = fb_service.get_post_context(post_id)
-    reply_text = brain.analyze_and_reply(context)
+    if not context: return
 
-    # 3. Safe Reply (No broken tags)
+    # 3. 🌟 DECISION: Chat vs Verify?
+    # If the user says "verify", "check", or "fact", we use the new Research Tool.
+    content_lower = context.lower()
+    if any(k in content_lower for k in ["verify", "fact check", "check this", "সত্যতা", "যাচাই"]):
+        logger.info("🕵️ Verification Intent Detected")
+        reply_text = brain.verify_post(context)
+    else:
+        # Standard witty reply
+        reply_text = brain.analyze_and_reply(context)
+
+    # 4. Reply
     final_reply = f"@[{user_psid}] {reply_text}" if user_psid else reply_text
-
     fb_service.post_comment(target_id, final_reply)
     increment_posts_analyzed()
     logger.info("✅ Mention answered")
 
-
 async def process_comment(post_id: str, comment_id: str, user_psid: str):
-    # (Same logic as process_mention but for feed comments)
     context = fb_service.get_comment_context(comment_id, post_id)
     if not context: return
     reply = brain.analyze_and_reply(context)

@@ -2,22 +2,20 @@ import logging
 from google import genai
 from google.genai import types
 from google.genai.errors import ClientError
+from duckduckgo_search import DDGS  # 🌟 NEW: Free Search Tool
 from app.core.config import settings
 
 logger = logging.getLogger("theta.brain")
 
-SIGNATURE = ""  # removed signature to make it feel more like a real chat
+SIGNATURE = ""
 
 # ✅ PRODUCTION MODEL STACK
-# We use the smartest available Gemma model first.
-# If it hits a rate limit, we instantly fall back to the mid-sized model.
 MODELS = [
-    "gemma-3-27b-it",   # Primary: High Intelligence (Smartest)
-    "gemma-3-12b-it",   # Fallback: High Reliability (Smarter than 1B)
+    "gemma-3-27b-it",  # Primary: High Intelligence
+    "gemma-3-12b-it",  # Fallback: Reliability
 ]
 
-# 🎭 THETA PERSONA (Professional & Intelligent)
-# We removed the "casual/emoji" instruction to save tokens and reduce "cringe".
+# 🎭 THETA PERSONA
 SYSTEM_INSTRUCTION_TEXT = (
     "You are Theta AI, a digital intelligence created by TeraMind.\n\n"
     "CORE PERSONALITY:\n"
@@ -34,15 +32,51 @@ class ThetaBrain:
         self.client = genai.Client(api_key=settings.GOOGLE_API_KEY)
         self._search_tool = types.Tool(google_search=types.GoogleSearch())
 
+    # ── 🌟 NEW: The Free Researcher (DuckDuckGo) ──
+    def _search_web(self, query: str) -> str:
+        """Searches DuckDuckGo and returns the top 3 results as text."""
+        try:
+            logger.info(f"🔎 Searching DDG for: {query}")
+            # Quick search, max 3 results to save tokens
+            results = DDGS().text(query, max_results=3)
+
+            context = ""
+            for i, res in enumerate(results, 1):
+                context += f"Source {i}: {res['title']} - {res['body']} (Link: {res['href']})\n"
+
+            return context if context else "No results found."
+
+        except Exception as e:
+            logger.error(f"❌ Search failed: {e}")
+            return "Search unavailable."
+
+    # ── 🌟 NEW: Verification Logic ──
+    def verify_post(self, post_content: str) -> str:
+        # 1. SEARCH (The "Hand")
+        # We search for the first 60 chars + "fact check" to get relevant hits
+        search_query = f"fact check {post_content[:60]}"
+        facts = self._search_web(search_query)
+
+        # 2. SYNTHESIZE (The "Brain")
+        prompt = (
+            f"Context from Web Search:\n{facts}\n\n"
+            f"User Post: \"{post_content}\"\n\n"
+            f"Task: Verify this post based ONLY on the context above. "
+            f"If it is a conspiracy theory, debunk it gently. "
+            f"Cite the sources using. "
+            f"IMPORTANT: Reply in the SAME LANGUAGE as the User Post."
+        )
+
+        # We route this strictly to the Cascade logic to handle errors/models
+        return self._cascade(prompt, use_search=False)
+
     # ── Public Feed ──
     def analyze_and_reply(self, context: str) -> str:
-        # Feed replies need to be a bit more "service-oriented" but still Theta
         prompt = f"A user tagged you in this post. Read it and reply as Theta:\n\n{context}"
         return self._cascade(prompt, use_search=False)
 
     # ── Private DM ──
     def chat_reply(self, user_message: str) -> str:
-        # DMs should feel like a 1-on-1 text message
         prompt = f"User: \"{user_message}\""
         return self._cascade(prompt, use_search=False)
 
@@ -53,39 +87,29 @@ class ThetaBrain:
         for model in MODELS:
             try:
                 is_gemma = "gemma" in model.lower()
-
-                # 🛠️ CONFIG STRATEGY
-                # Gemma 3:
-                #   1. NO 'system_instruction' param (Merge it into prompt)
-                #   2. NO tools (Search causes crash)
-
                 final_prompt = prompt
 
                 if is_gemma:
-                    # Merge persona into the prompt string
+                    # Merge persona into the prompt string for Gemma
                     final_prompt = f"{SYSTEM_INSTRUCTION_TEXT}\n\nTask: {prompt}"
-
                     config = types.GenerateContentConfig(
-                        temperature=0.8,  # Slightly higher for more "human" variance
-                        system_instruction=None,  # Explicitly None
-                        tools=None  # Explicitly None
+                        temperature=0.7,
+                        system_instruction=None,
+                        tools=None
                     )
                 else:
-                    # Gemini 2.5: Can handle native system instruction + Tools
                     config = types.GenerateContentConfig(
                         system_instruction=SYSTEM_INSTRUCTION_TEXT,
-                        temperature=0.8,
+                        temperature=0.7,
                         tools=[self._search_tool] if use_search else None
                     )
 
                 logger.info(f"⚡ Trying {model}...")
-
                 resp = self.client.models.generate_content(
                     model=model,
                     contents=final_prompt,
                     config=config,
                 )
-
                 return resp.text.strip()
 
             except ClientError as e:
@@ -99,7 +123,6 @@ class ThetaBrain:
                 else:
                     logger.error(f"❌ {model} Client Error: {e}")
                 continue
-
             except Exception as e:
                 logger.error(f"❌ {model} Crash: {e}")
                 continue
